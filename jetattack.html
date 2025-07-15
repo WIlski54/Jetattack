@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jet Attack!</title>
+    <style>
+        body { margin: 0; padding: 0; background: #2c3e50; font-family: Arial, sans-serif; overflow: hidden; }
+        .game-container { position: relative; width: 100vw; height: 100vh; }
+        canvas { display: block; background: #87ceeb; }
+        .info { position: absolute; top: 20px; left: 20px; color: #ecf0f1; font-size: 18px; z-index: 10; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;}
+        .controls { position: absolute; bottom: 90px; left: 20px; color: #bdc3c7; font-size: 14px; z-index: 10; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div class="info">
+            <div id="player-info-container"></div>
+            <div>Leben: <span id="lives">3</span></div>
+            <div>Score: <span id="score">0</span></div>
+        </div>
+        <div class="controls">
+            Steuerung: Pfeiltasten | Schießen: Leertaste
+        </div>
+    </div>
+
+    <script>
+        // --- GRUNDEINSTELLUNGEN ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let gameState = null;
+        let gameOverscreen = null;
+
+        // --- SPIELERNAME AUSLESEN ---
+        const urlParams = new URLSearchParams(window.location.search);
+        const playerName = urlParams.get('playerName') || 'Pilot';
+
+        // --- ASSET-SETUP ---
+        const images = {
+            jet: new Image(), cannon: new Image(), projectile: new Image(),
+            playerProjectile: new Image(), fuelTank: new Image(), fuelGauge: new Image(),
+            heli1: new Image(), heli2: new Image(),
+            ex1: new Image(), ex2: new Image(), ex3: new Image(), ex4: new Image(),
+            boot: new Image()
+        };
+        const sounds = {
+            jet: new Audio('jet.mp3'),
+            tank: new Audio('tank.mp3'),
+            explosion: new Audio('explosion.mp3'),
+            heli: new Audio('heli.mp3'),
+            jetshoot: new Audio('jetshoot.mp3')
+        };
+        
+        const totalItems = Object.keys(images).length + Object.keys(sounds).length;
+        let itemsLoaded = 0;
+        let allItemsLoaded = false;
+        
+        function onItemLoad() {
+            itemsLoaded++;
+            if (itemsLoaded === totalItems) {
+                allItemsLoaded = true;
+                canvas.style.cursor = 'pointer';
+                ctx.fillStyle = '#ecf0f1';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${playerName}, drücke ENTER zum Starten!`, canvas.width / 2, canvas.height / 2);
+            }
+        }
+
+        function setupAssets() {
+            Object.values(images).forEach(img => img.onload = onItemLoad);
+            images.jet.src = 'jet1.png';
+            images.cannon.src = 'canon.png';
+            images.projectile.src = 'projectile.png';
+            images.playerProjectile.src = 'projectile.png';
+            images.fuelTank.src = 'tank.png';
+            images.fuelGauge.src = 'anzeiger.png';
+            images.heli1.src = 'heli.png';
+            images.heli2.src = 'heli3.png';
+            images.ex1.src = 'ex1.png';
+            images.ex2.src = 'ex2.png';
+            images.ex3.src = 'ex3.png';
+            images.ex4.src = 'ex4.png';
+            images.boot.src = 'boot.png';
+
+            sounds.jet.loop = true;
+            sounds.tank.loop = true;
+            sounds.heli.loop = true;
+            Object.values(sounds).forEach(sound => {
+                sound.addEventListener('canplaythrough', onItemLoad, { once: true });
+                sound.load(); // Erzwingt das Laden des Sounds
+            });
+        }
+        
+        function playSound(sound) {
+            sound.currentTime = 0;
+            sound.play().catch(e => console.error(`Sound ${sound.src} konnte nicht abgespielt werden:`, e));
+        }
+
+        function stopAllSounds() {
+            Object.values(sounds).forEach(sound => {
+                sound.pause();
+            });
+        }
+
+        // --- EVENT LISTENERS & CANVAS GRÖSSE ---
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (allItemsLoaded && !gameState) {
+                ctx.fillStyle = '#ecf0f1';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${playerName}, drücke ENTER zum Starten!`, canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        
+        document.addEventListener('keydown', (e) => {
+            if (allItemsLoaded && !gameState && e.code === 'Enter') {
+                startGame();
+            }
+        }, { once: true });
+
+        document.addEventListener('keydown', (e) => {
+            if (gameState && gameState.keys) {
+                gameState.keys[e.code] = true;
+                e.preventDefault();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (gameState && gameState.keys) {
+                gameState.keys[e.code] = false;
+                e.preventDefault();
+            }
+        });
+
+        // --- SPIEL-LOGIK ---
+        function startGame() {
+            canvas.style.cursor = 'default';
+            gameState = {
+                player: {
+                    x: canvas.width / 2 - 30, y: canvas.height - 100,
+                    width: 60, height: 80, speed: 5, lives: 3, invulnerable: 0,
+                    fuel: 100, maxFuel: 100
+                },
+                cannons: [], fuelTanks: [], projectiles: [], playerProjectiles: [],
+                helicopters: [], explosions: [], boats: [], 
+                nextHelicopterSpawnTime: Date.now() + 8000,
+                lastPlayerShot: 0,
+                terrain: { scrollY: 0, riverPath: [], riverWidth: 720 },
+                score: 0, keys: {}, worldGeneratedUpToY: 0,
+                isRefueling: false
+            };
+            
+            const playerInfoContainer = document.getElementById('player-info-container');
+            playerInfoContainer.innerHTML = `Pilot: <strong>${playerName}</strong>`;
+            document.getElementById('lives').textContent = gameState.player.lives;
+            document.getElementById('score').textContent = gameState.score;
+
+            extendWorldIfNeeded();
+            sounds.jet.play().catch(e => console.error("Jet-Sound konnte nicht gestartet werden:", e));
+            gameLoop();
+        }
+
+        function gameLoop() {
+            if (!gameState) return;
+            
+            update();
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update() {
+            gameState.isRefueling = false;
+
+            updatePlayer();
+            updateCannons();
+            updateHelicopters();
+            updateBoats();
+            updateExplosions();
+            updateProjectiles();
+            updatePlayerProjectiles();
+            updateTerrain();
+            extendWorldIfNeeded();
+
+            checkRefueling();
+            checkEnemyProjectileCollisions();
+            checkPlayerProjectileCollisions();
+
+            if (gameState.isRefueling) {
+                if(sounds.tank.paused) sounds.tank.play();
+            } else {
+                if(!sounds.tank.paused) sounds.tank.pause();
+            }
+            if (gameState.helicopters.length > 0) {
+                if(sounds.heli.paused) sounds.heli.play();
+            } else {
+                if(!sounds.heli.paused) sounds.heli.pause();
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawTerrain();
+            drawFuelTanks();
+            drawCannons();
+            drawBoats();
+            drawHelicopters();
+            drawExplosions();
+            drawPlayer();
+            drawProjectiles();
+            drawPlayerProjectiles();
+            drawUI();
+        }
+        
+        function extendWorldIfNeeded() {
+            if (!gameState) return;
+            const screenTopY_world = -gameState.terrain.scrollY;
+            if (screenTopY_world < gameState.worldGeneratedUpToY + 500) {
+                const startY = gameState.worldGeneratedUpToY; 
+                const endY = startY - 2000;
+                let centerX = canvas.width / 2; 
+                let amplitude = Math.min(100, canvas.width * 0.15); 
+                let frequency = 0.01;
+                for (let y = startY; y > endY; y -= 5) {
+                    const riverCenterX = centerX + Math.sin(y * frequency) * amplitude;
+                    gameState.terrain.riverPath.push({x: riverCenterX, y: y});
+                    if (y % 250 === 0) {
+                        if (Math.random() > 0.74) gameState.cannons.push({ x: 50 + Math.random() * Math.min(100, canvas.width * 0.1), y: y, width: 50, height: 40, lastShot: 0, side: 'left'});
+                        if (Math.random() > 0.74) gameState.cannons.push({ x: canvas.width - 150 + Math.random() * Math.min(100, canvas.width * 0.1), y: y, width: 50, height: 40, lastShot: 0, side: 'right'});
+                        if (Math.random() > 0.78) {
+                            const riverHalfWidth = gameState.terrain.riverWidth / 2; 
+                            const tankSize = 120; 
+                            let tankX;
+                            if (Math.random() < 0.5) { 
+                                tankX = riverCenterX - riverHalfWidth - tankSize - (Math.random() * 30); 
+                            } else { 
+                                tankX = riverCenterX + riverHalfWidth + (Math.random() * 30); 
+                            }
+                            gameState.fuelTanks.push({ x: tankX, y: y, width: tankSize, height: tankSize, fuelAmount: 100 });
+                        }
+                        
+                        // Boote spawnen
+                        if (Math.random() > 0.88) {
+                            const riverHalfWidth = gameState.terrain.riverWidth / 2;
+                            const comesFromLeft = Math.random() < 0.5;
+                            const boat = {
+                                width: 120, height: 60,
+                                y: y, 
+                                baseSpeed: 1 + Math.random() * 1.5,
+                                lastShot: Date.now(),
+                                shootCooldown: 2500 + Math.random() * 1500,
+                                direction: comesFromLeft ? 1 : -1,
+                                movementRange: 200 + Math.random() * 100, // Wie weit das Boot fährt
+                                distanceTraveled: 0
+                            };
+                            // Boot startet in der Flussmitte
+                            boat.x = riverCenterX - boat.width / 2;
+                            boat.speed = boat.baseSpeed * boat.direction;
+                            gameState.boats.push(boat);
+                        }
+                    }
+                }
+                gameState.worldGeneratedUpToY = endY;
+                const cutoffY = -gameState.terrain.scrollY + canvas.height + 200; 
+                gameState.terrain.riverPath = gameState.terrain.riverPath.filter(p => p.y < cutoffY);
+                gameState.cannons = gameState.cannons.filter(c => c.y < cutoffY);
+                gameState.fuelTanks = gameState.fuelTanks.filter(t => t.y < cutoffY);
+                gameState.boats = gameState.boats.filter(b => b.y < cutoffY);
+            }
+        }
+        
+        function updatePlayer() {
+            if (!gameState) return;
+            if (gameState.keys['ArrowLeft'] && gameState.player.x > 0) gameState.player.x -= gameState.player.speed;
+            if (gameState.keys['ArrowRight'] && gameState.player.x < canvas.width - gameState.player.width) gameState.player.x += gameState.player.speed;
+            if (gameState.keys['ArrowUp'] && gameState.player.y > 0) gameState.player.y -= gameState.player.speed;
+            if (gameState.keys['ArrowDown'] && gameState.player.y < canvas.height - gameState.player.height) gameState.player.y += gameState.player.speed;
+            if (gameState.player.invulnerable > 0) gameState.player.invulnerable--;
+
+            const currentTime = Date.now();
+            if (gameState.keys['Space'] && currentTime - gameState.lastPlayerShot > 250) {
+                gameState.playerProjectiles.push({ x: gameState.player.x + gameState.player.width / 2, y: gameState.player.y, width: 8, height: 16, speed: 10 });
+                playSound(sounds.jetshoot);
+                gameState.lastPlayerShot = currentTime;
+            }
+            
+            gameState.player.fuel -= 0.05;
+            if (gameState.player.fuel <= 0) {
+                gameState.player.fuel = 0;
+                stopAllSounds();
+                playSound(sounds.explosion);
+                showGameOverScreen(gameState.score);
+                gameState = null; 
+            }
+        }
+        
+        function updateCannons() {
+            if (!gameState) return;
+            const currentTime = Date.now();
+            gameState.cannons.forEach(c => {
+                const screenY = c.y + gameState.terrain.scrollY;
+                if (screenY >= 0 && screenY <= canvas.height && currentTime - c.lastShot > 2000) {
+                    let dx = gameState.player.x - c.x; let dy = gameState.player.y - screenY;
+                    let d = Math.sqrt(dx * dx + dy * dy); let s = 3;
+                    gameState.projectiles.push({ x: c.x + c.width/2, y: screenY + c.height/2, vx: (dx / d) * s, vy: (dy / d) * s });
+                    c.lastShot = currentTime;
+                }
+            });
+        }
+        
+        function updateHelicopters() {
+            if (!gameState) return;
+            if (Date.now() > gameState.nextHelicopterSpawnTime) {
+                spawnHelicopter();
+            }
+            for (let i = gameState.helicopters.length - 1; i >= 0; i--) {
+                const heli = gameState.helicopters[i];
+                heli.x += heli.speed;
+                if (Date.now() - heli.lastFrameChange > heli.frameDuration) {
+                    heli.currentFrame = (heli.currentFrame + 1) % 2;
+                    heli.lastFrameChange = Date.now();
+                }
+                if (Date.now() - heli.lastShot > heli.shootCooldown) {
+                    let dx = gameState.player.x - heli.x; let dy = gameState.player.y - heli.y;
+                    let distance = Math.sqrt(dx * dx + dy * dy);
+                    let projectileSpeed = 4;
+                    gameState.projectiles.push({
+                        x: heli.x + heli.width / 2, y: heli.y + heli.height / 2,
+                        vx: (dx / distance) * projectileSpeed, vy: (dy / distance) * projectileSpeed
+                    });
+                    heli.lastShot = Date.now();
+                }
+                if (heli.x > canvas.width + heli.width || heli.x < -heli.width) {
+                    gameState.helicopters.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnHelicopter() {
+            const comesFromLeft = Math.random() < 0.5;
+            const heli = {
+                width: 100, height: 50,
+                y: 50 + Math.random() * (canvas.height / 4),
+                speed: 2 + Math.random() * 2,
+                currentFrame: 0, lastFrameChange: Date.now(),
+                frameDuration: 100, lastShot: Date.now(),
+                shootCooldown: 1500 + Math.random() * 1000
+            };
+            if (comesFromLeft) {
+                heli.x = -heli.width;
+            } else {
+                heli.x = canvas.width;
+                heli.speed = -heli.speed;
+            }
+            gameState.helicopters.push(heli);
+            gameState.nextHelicopterSpawnTime = Date.now() + 8000 + Math.random() * 8000;
+        }
+
+       function updateBoats() {
+    if (!gameState) return;
+    for (let i = gameState.boats.length - 1; i >= 0; i--) {
+        const boat = gameState.boats[i];
+        const boatScreenY = boat.y + gameState.terrain.scrollY;
+
+        // Boot bewegen
+        boat.x += boat.speed;
+
+        // Flussmitte und -breite auf Höhe des Bootes bestimmen:
+        let riverPoint = gameState.terrain.riverPath.reduce((prev, curr) =>
+            Math.abs(curr.y - boat.y) < Math.abs(prev.y - boat.y) ? curr : prev
+        );
+        const riverCenterX = riverPoint.x;
+        const riverHalfWidth = gameState.terrain.riverWidth / 2;
+        const riverLeft = riverCenterX - riverHalfWidth;
+        const riverRight = riverCenterX + riverHalfWidth;
+
+        // Schießen auf den Spieler wenn Boot auf dem Bildschirm ist
+        if (boatScreenY >= 0 && boatScreenY <= canvas.height) {
+            if (Date.now() - boat.lastShot > boat.shootCooldown) {
+                let dx = gameState.player.x - boat.x;
+                let dy = gameState.player.y - boatScreenY;
+                let distance = Math.sqrt(dx * dx + dy * dy);
+                let projectileSpeed = 3;
+                gameState.projectiles.push({
+                    x: boat.x + boat.width / 2,
+                    y: boatScreenY + boat.height / 2,
+                    vx: (dx / distance) * projectileSpeed,
+                    vy: (dy / distance) * projectileSpeed
+                });
+                boat.lastShot = Date.now();
+            }
+        }
+
+        // Pendeln an den Flussufern:
+        if (boat.direction > 0 && boat.x + boat.width >= riverRight) {
+            boat.direction = -1;
+            boat.speed = -Math.abs(boat.baseSpeed);
+            boat.x = riverRight - boat.width;
+        } else if (boat.direction < 0 && boat.x <= riverLeft) {
+            boat.direction = 1;
+            boat.speed = Math.abs(boat.baseSpeed);
+            boat.x = riverLeft;
+        }
+
+        // Boot entfernen, falls es komplett aus dem sichtbaren Bereich gescrollt ist (nach oben!)
+        if (boatScreenY > canvas.height + boat.height) {
+            gameState.boats.splice(i, 1);
+        }
+    }
+}
+
+
+        function updateExplosions() {
+            if (!gameState) return;
+            for (let i = gameState.explosions.length - 1; i >= 0; i--) {
+                const explosion = gameState.explosions[i];
+                const currentTime = Date.now();
+                
+                if (currentTime - explosion.lastFrameChange > explosion.frameDuration) {
+                    explosion.currentFrame++;
+                    explosion.lastFrameChange = currentTime;
+                    
+                    if (explosion.currentFrame >= 4) {
+                        gameState.explosions.splice(i, 1);
+                    }
+                }
+            }
+        }
+
+        function createExplosion(x, y) {
+            if (!gameState) return;
+            gameState.explosions.push({
+                x: x,
+                y: y,
+                width: 80,
+                height: 80,
+                currentFrame: 0,
+                lastFrameChange: Date.now(),
+                frameDuration: 100
+            });
+        }
+
+        function updateProjectiles() {
+            if (!gameState) return;
+            gameState.projectiles = gameState.projectiles.filter(p => {
+                p.x += p.vx; p.y += p.vy;
+                return p.x >= 0 && p.x <= canvas.width && p.y >= 0 && p.y <= canvas.height;
+            });
+        }
+        
+        function updatePlayerProjectiles() {
+            if (!gameState) return;
+            gameState.playerProjectiles.forEach(p => p.y -= p.speed);
+            gameState.playerProjectiles = gameState.playerProjectiles.filter(p => p.y + p.height > 0);
+        }
+        
+        function updateTerrain() {
+            if (!gameState) return;
+            gameState.terrain.scrollY += 2;
+            gameState.score += 1;
+            document.getElementById('score').textContent = gameState.score;
+        }
+        
+        function checkRefueling() {
+            if (!gameState) return;
+            const player = gameState.player;
+            for (let i = gameState.fuelTanks.length - 1; i >= 0; i--) {
+                const tank = gameState.fuelTanks[i];
+                const tankScreenY = tank.y + gameState.terrain.scrollY;
+                if (player.x < tank.x + tank.width && player.x + player.width > tank.x &&
+                    player.y < tankScreenY + tank.height && player.y + player.height > tankScreenY) {
+                    if (player.fuel < player.maxFuel && tank.fuelAmount > 0) {
+                        gameState.isRefueling = true;
+                        const refuelRate = 0.5; player.fuel += refuelRate; tank.fuelAmount -= refuelRate;
+                        if (player.fuel > player.maxFuel) player.fuel = player.maxFuel;
+                    }
+                    if (tank.fuelAmount <= 0) gameState.fuelTanks.splice(i, 1);
+                    break;
+                }
+            }
+        }
+        
+        function checkEnemyProjectileCollisions() {
+            if (!gameState) return;
+             gameState.projectiles.forEach((projectile, index) => {
+                let p = gameState.player;
+                if (projectile.x - 8 < p.x + p.width && projectile.x + 8 > p.x && projectile.y - 8 < p.y + p.height && projectile.y + 8 > p.y && p.invulnerable <= 0) {
+                    gameState.projectiles.splice(index, 1);
+                    p.lives--; p.invulnerable = 120;
+                    document.getElementById('lives').textContent = p.lives;
+                    if (p.lives <= 0) {
+                        playSound(sounds.explosion);
+                        stopAllSounds();
+                        showGameOverScreen(gameState.score);
+                        gameState = null; 
+                    }
+                }
+            });
+        }
+        
+        function checkPlayerProjectileCollisions() {
+            if (!gameState) return;
+            for (let i = gameState.playerProjectiles.length - 1; i >= 0; i--) {
+                const p = gameState.playerProjectiles[i];
+                let hit = false;
+                for (let j = gameState.cannons.length - 1; j >= 0; j--) {
+                    const c = gameState.cannons[j];
+                    const cScreenY = c.y + gameState.terrain.scrollY;
+                    if (p.x < c.x + c.width && p.x + p.width > c.x && p.y < cScreenY + c.height && p.y + p.height > cScreenY) {
+                        playSound(sounds.explosion);
+                        createExplosion(c.x + c.width/2 - 40, cScreenY + c.height/2 - 40);
+                        gameState.cannons.splice(j, 1);
+                        gameState.score += 100;
+                        hit = true; break;
+                    }
+                }
+                if (!hit) {
+                    for (let k = gameState.helicopters.length - 1; k >= 0; k--) {
+                        const heli = gameState.helicopters[k];
+                         if (p.x < heli.x + heli.width && p.x + p.width > heli.x && p.y < heli.y + heli.height && p.y + p.height > heli.y) {
+                            playSound(sounds.explosion);
+                            createExplosion(heli.x + heli.width/2 - 40, heli.y + heli.height/2 - 40);
+                            gameState.helicopters.splice(k, 1);
+                            gameState.score += 250;
+                            hit = true; break;
+                        }
+                    }
+                }
+                if (!hit) {
+                    for (let l = gameState.boats.length - 1; l >= 0; l--) {
+                        const boat = gameState.boats[l];
+                        const boatScreenY = boat.y + gameState.terrain.scrollY;
+                        if (p.x < boat.x + boat.width && p.x + p.width > boat.x && 
+                            p.y < boatScreenY + boat.height && p.y + p.height > boatScreenY) {
+                            playSound(sounds.explosion);
+                            createExplosion(boat.x + boat.width/2 - 40, boatScreenY + boat.height/2 - 40);
+                            gameState.boats.splice(l, 1);
+                            gameState.score += 150;
+                            hit = true; break;
+                        }
+                    }
+                }
+                if(hit) {
+                    gameState.playerProjectiles.splice(i, 1);
+                    document.getElementById('score').textContent = gameState.score;
+                }
+            }
+        }
+        
+        function drawTerrain() {
+            if (!gameState) return;
+            ctx.fillStyle = '#4CAF50'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#2196F3'; ctx.beginPath();
+            let riverWidth = gameState.terrain.riverWidth;
+            let path = gameState.terrain.riverPath.slice().sort((a,b) => a.y - b.y);
+            let firstPoint = true;
+            for (let i = 0; i < path.length; i++) {
+                let point = path[i]; let screenY = point.y + gameState.terrain.scrollY;
+                if (screenY >= -riverWidth && screenY <= canvas.height + riverWidth) {
+                    if (firstPoint) { ctx.moveTo(point.x - riverWidth/2, screenY); firstPoint = false; }
+                    ctx.lineTo(point.x - riverWidth/2, screenY);
+                }
+            }
+            for (let i = path.length - 1; i >= 0; i--) {
+                let point = path[i]; let screenY = point.y + gameState.terrain.scrollY;
+                if (screenY >= -riverWidth && screenY <= canvas.height + riverWidth) { ctx.lineTo(point.x + riverWidth/2, screenY); }
+            }
+            ctx.closePath(); ctx.fill();
+        }
+        
+        function drawPlayer() { if (!gameState) return; if (gameState.player.invulnerable > 0 && Math.floor(Date.now() / 100) % 2) return; ctx.drawImage(images.jet, gameState.player.x, gameState.player.y, gameState.player.width, gameState.player.height); }
+        function drawFuelTanks() { if (!gameState) return; gameState.fuelTanks.forEach(t => { let screenY = t.y + gameState.terrain.scrollY; if (screenY >= -t.height && screenY <= canvas.height) { ctx.drawImage(images.fuelTank, t.x, screenY, t.width, t.height); } }); }
+        function drawCannons() { if (!gameState) return; gameState.cannons.forEach(c => { let screenY = c.y + gameState.terrain.scrollY; if (screenY >= -50 && screenY <= canvas.height + 50) { if (c.side === 'right') { ctx.save(); ctx.translate(c.x + c.width, screenY); ctx.scale(-1, 1); ctx.drawImage(images.cannon, 0, 0, c.width, c.height); ctx.restore(); } else { ctx.drawImage(images.cannon, c.x, screenY, c.width, c.height); } } }); }
+        function drawHelicopters() { 
+            if (!gameState) return; 
+            gameState.helicopters.forEach(heli => { 
+                const img = heli.currentFrame === 0 ? images.heli1 : images.heli2; 
+                ctx.save(); 
+                if (heli.speed > 0) { 
+                    // Heli fliegt nach rechts - gespiegelt darstellen
+                    ctx.translate(heli.x + heli.width, heli.y); 
+                    ctx.scale(-1, 1); 
+                    ctx.drawImage(img, 0, 0, heli.width, heli.height); 
+                } else { 
+                    // Heli fliegt nach links - normal darstellen
+                    ctx.drawImage(img, heli.x, heli.y, heli.width, heli.height); 
+                } 
+                ctx.restore(); 
+            }); 
+        }
+        function drawExplosions() { 
+            if (!gameState) return; 
+            gameState.explosions.forEach(explosion => { 
+                const explosionImages = [images.ex1, images.ex2, images.ex3, images.ex4];
+                const img = explosionImages[explosion.currentFrame];
+                if (img) {
+                    ctx.drawImage(img, explosion.x, explosion.y, explosion.width, explosion.height); 
+                }
+            }); 
+        }
+       function drawBoats() { 
+    if (!gameState) return; 
+    gameState.boats.forEach(boat => { 
+        const boatScreenY = boat.y + gameState.terrain.scrollY;
+        if (boatScreenY >= -boat.height && boatScreenY <= canvas.height + boat.height) {
+            ctx.save();
+            if (boat.direction > 0) {
+                // Boot fährt nach rechts – gespiegelt darstellen!
+                ctx.translate(boat.x + boat.width, boatScreenY);
+                ctx.scale(-1, 1);
+                ctx.drawImage(images.boot, 0, 0, boat.width, boat.height);
+            } else {
+                // Boot fährt nach links – normal zeichnen
+                ctx.drawImage(images.boot, boat.x, boatScreenY, boat.width, boat.height);
+            }
+            ctx.restore();
+        }
+    }); 
+}
+        function drawProjectiles() { if (!gameState) return; gameState.projectiles.forEach(p => ctx.drawImage(images.projectile, p.x - 8, p.y - 8, 16, 16)); }
+        function drawPlayerProjectiles() { if (!gameState) return; gameState.playerProjectiles.forEach(p => ctx.drawImage(images.playerProjectile, p.x - p.width / 2, p.y, p.width, p.height)); }
+        function drawUI() { if (!gameState) return; ctx.drawImage(images.fuelGauge, 20, canvas.height - 70, 60, 60); const fuelPercentage = gameState.player.fuel / gameState.player.maxFuel; ctx.fillStyle = '#222'; ctx.fillRect(90, canvas.height - 55, 150, 30); ctx.fillStyle = fuelPercentage > 0.25 ? '#00FF00' : '#FF0000'; ctx.fillRect(90, canvas.height - 55, 150 * fuelPercentage, 30); ctx.strokeStyle = '#FFF'; ctx.strokeRect(90, canvas.height - 55, 150, 30); }
+
+function showGameOverScreen(finalScore) {
+    gameState = null; // stop game loop
+    gameOverScreen = {
+        opacity: 0,
+        maxOpacity: 1,
+        fadeInSpeed: 0.03,
+        finalScore: finalScore,
+        explosionTime: Date.now(),
+        explosionDuration: 900,
+        autoReturnTime: Date.now() + 5000, // 5 Sekunden bis automatischer Rücksprung
+        showingCountdown: false
+    };
+    requestAnimationFrame(drawGameOverScreen);
+}
+
+function drawGameOverScreen() {
+    // Schwarzer, halbtransparenter Hintergrund
+    ctx.save();
+    ctx.globalAlpha = Math.min(gameOverScreen.opacity, gameOverScreen.maxOpacity);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // Optional: Explosionseffekt
+    const centerX = canvas.width / 2, centerY = canvas.height / 2 - 50;
+    if (Date.now() - gameOverScreen.explosionTime < gameOverScreen.explosionDuration) {
+        let frame = Math.floor(((Date.now() - gameOverScreen.explosionTime) / gameOverScreen.explosionDuration) * 4);
+        frame = Math.min(frame, 3);
+        const explosionImages = [images.ex1, images.ex2, images.ex3, images.ex4];
+        if (explosionImages[frame]) {
+            ctx.drawImage(explosionImages[frame], centerX - 80, centerY - 80, 160, 160);
+        }
+    }
+
+    // GAME OVER Text
+    ctx.save();
+    ctx.globalAlpha = Math.min(gameOverScreen.opacity, gameOverScreen.maxOpacity);
+    ctx.fillStyle = "#FF3333";
+    ctx.font = "bold 70px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", centerX, centerY + 40);
+
+    ctx.fillStyle = "#FFF";
+    ctx.font = "30px Arial";
+    ctx.fillText("Score: " + gameOverScreen.finalScore, centerX, centerY + 90);
+
+    // Countdown anzeigen
+    const timeLeft = Math.max(0, Math.ceil((gameOverScreen.autoReturnTime - Date.now()) / 1000));
+    if (timeLeft > 0) {
+        ctx.font = "22px Arial";
+        ctx.fillStyle = "#FFD700";
+        ctx.fillText(`Rückkehr zur Startseite in ${timeLeft} Sekunden...`, centerX, centerY + 130);
+        
+        ctx.font = "18px Arial";
+        ctx.fillStyle = "#CCC";
+        ctx.fillText("Drücke ENTER für sofortigen Neustart", centerX, centerY + 160);
+    } else {
+        // Automatischer Rücksprung zur Startseite
+        window.location.href = 'index.html';
+        return;
+    }
+    ctx.restore();
+
+    // Fade-in und Timer-Update
+    if (gameOverScreen.opacity < gameOverScreen.maxOpacity) {
+        gameOverScreen.opacity += gameOverScreen.fadeInSpeed;
+    }
+    
+    // Weiter animieren bis automatischer Rücksprung
+    if (Date.now() < gameOverScreen.autoReturnTime) {
+        requestAnimationFrame(drawGameOverScreen);
+    } else {
+        // Automatischer Rücksprung zur Startseite
+        window.location.href = 'index.html';
+    }
+}
+
+// Event Listener für manuellen Neustart während Game Over
+document.addEventListener('keydown', function(e) {
+    if (gameOverScreen && e.code === 'Enter') {
+        gameOverScreen = null;
+        startGame();
+    }
+});
+
+        // --- INITIALISIERUNG ---
+        resizeCanvas();
+        setupAssets();
+    </script>
+</body>
+</html>

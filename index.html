@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jet Attack - Start</title>
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            background-color: #1a2a3a; /* Fallback color */
+        }
+
+        .background-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        /* Layer 1: Blurred background that covers the screen */
+        .blurry-background {
+            background-image: url('titel.png');
+            background-size: cover;
+            filter: blur(8px) brightness(0.6);
+            transform: scale(1.1); /* Hides blurred edges */
+            z-index: 1;
+        }
+
+        /* Layer 2: Sharp foreground image that fits inside */
+        .sharp-foreground {
+            background-image: url('titel.png');
+            background-size: contain;
+            z-index: 2;
+        }
+
+        /* Layer 3: The content wrapper */
+        .content-wrapper {
+            position: relative; /* Can be relative because it's in the normal flow */
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 3;
+        }
+
+        .start-container {
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.7);
+        }
+
+        h1 {
+            font-size: 3em;
+            text-shadow: 2px 2px 8px rgba(0, 255, 255, 0.8);
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            background: #008c9e;
+            color: white;
+            border: 2px solid #00c2d1;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background: #00c2d1;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.7);
+        }
+
+        #name-section {
+            display: none;
+            margin-top: 20px;
+        }
+
+        #name-input {
+            padding: 10px;
+            font-size: 1em;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+            width: 80%;
+        }
+
+        /* Off-Button Styling */
+        .off-button {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 60px;
+            height: 60px;
+            border: none;
+            background: none;
+            padding: 0;
+            border-radius: 50%;
+            overflow: hidden;
+        }
+
+        .off-button img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .off-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.5);
+        }
+
+        .off-button:active {
+            transform: scale(0.95);
+        }
+
+        /* Responsive Design für kleinere Bildschirme */
+        @media (max-width: 768px) {
+            .off-button {
+                width: 50px;
+                height: 50px;
+                top: 15px;
+                right: 15px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .start-container {
+                padding: 30px 20px;
+                margin: 0 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    
+    <div class="background-layer blurry-background"></div>
+    <div class="background-layer sharp-foreground"></div>
+    
+    <!-- Off-Button -->
+    <button class="off-button" id="off-button" title="Automat beenden">
+        <img src="off.png" alt="Off">
+    </button>
+    
+    <div class="content-wrapper">
+        <div class="start-container">
+            <h1>Willkommen Captain!</h1>
+            
+            <button id="start-button" class="btn">Mission starten?</button>
+
+            <div id="name-section">
+                <p>Pilotenname eingeben:</p>
+                <input type="text" id="name-input" placeholder="Max Mustermann" maxlength="20">
+                <br>
+                <button id="play-button" class="btn">Spiel beginnen</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const startButton = document.getElementById('start-button');
+        const playButton = document.getElementById('play-button');
+        const offButton = document.getElementById('off-button');
+        const nameSection = document.getElementById('name-section');
+        const nameInput = document.getElementById('name-input');
+
+        const titleMusic = new Audio('titelmelodie.mp3');
+        titleMusic.loop = true;
+
+        startButton.addEventListener('click', () => {
+            titleMusic.play().catch(e => console.error("Titelmelodie konnte nicht starten:", e));
+            startButton.style.display = 'none';
+            nameSection.style.display = 'block';
+            nameInput.focus();
+        });
+
+        playButton.addEventListener('click', () => {
+            const playerName = nameInput.value || 'Pilot';
+            window.location.href = `jetattack.html?playerName=${encodeURIComponent(playerName)}`;
+        });
+
+        // Off-Button Event Listener
+        offButton.addEventListener('click', () => {
+            // Musik stoppen falls sie läuft
+            titleMusic.pause();
+            titleMusic.currentTime = 0;
+            
+            // Bestätigungsdialog (optional)
+            const confirmExit = confirm('Möchten Sie den Automaten wirklich beenden?');
+            
+            if (confirmExit) {
+                // Hier wird später zur gewünschten Webseite weitergeleitet
+                // Platzhalter für zukünftige Implementierung
+                window.location.href = 'exit-page.html'; // Platzhalter-URL
+                
+                // Alternative: Zu einer externen Seite weiterleiten
+                // window.location.href = 'https://example.com/exit';
+                
+                // Alternative: Fenster schließen (funktioniert nur bei Popup-Fenstern)
+                // window.close();
+            }
+        });
+
+        // Tastatur-Shortcut für Off-Button (optional: ESC-Taste)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                offButton.click();
+            }
+        });
+    </script>
+
+</body>
+</html>
