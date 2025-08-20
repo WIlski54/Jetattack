@@ -124,6 +124,13 @@
             }
         }, { once: true });
 
+        // HINZUGEFÜGT: Startet das Spiel auch bei einem Klick/Tippen auf den Bildschirm
+        canvas.addEventListener('click', () => {
+            if (allItemsLoaded && !gameState) {
+                startGame();
+            }
+        }, { once: true });
+        
         document.addEventListener('keydown', (e) => {
             if (gameState && gameState.keys) {
                 gameState.keys[e.code] = true;
@@ -717,4 +724,5 @@ document.addEventListener('keydown', function(e) {
         setupAssets();
     </script>
 </body>
+
 </html>
